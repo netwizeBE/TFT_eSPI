@@ -150,8 +150,16 @@
   #if defined (STM32F2xx) || defined (STM32F4xx) || defined (STM32F7xx)
     #define STM32_DMA // DMA is available with these processors
     // Initialise processor specific SPI and DMA instances - used by init()
-    #define INIT_TFT_DATA_BUS spiHal.Instance = SPI1; \
+    #if defined (TFT_SPI3)
+      #define INIT_TFT_DATA_BUS spiHal.Instance = SPI3; \
+                                dmaHal.Instance = DMA1_Stream5
+    #elif defined (TFT_SPI2)
+        #define INIT_TFT_DATA_BUS spiHal.Instance = SPI2; \
+                              dmaHal.Instance = DMA1_Stream4
+    #else
+        #define INIT_TFT_DATA_BUS spiHal.Instance = SPI1; \
                               dmaHal.Instance = DMA2_Stream3
+    #endif
     // The DMA hard-coding for SPI1 is in TFT_eSPI_STM32.c as follows:
     //     DMA_CHANNEL_3 
     //     DMA2_Stream3_IRQn and DMA2_Stream3_IRQHandler()

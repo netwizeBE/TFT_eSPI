@@ -10,7 +10,13 @@
   // No globals
 #else
   // Use STM32 default SPI port
-  SPIClass& spi = SPI;
+  #if defined (TFT_SPI3)
+    SPIClass spi(PC12, PC11, PC10);  // SPI3
+  #elif defined (TFT_SPI2)
+    SPIClass spi(PB15, PB14, PB13);  // SPI2
+  #else
+    SPIClass& spi = SPI;
+  #endif
 
   // SPI HAL peripheral handle
   SPI_HandleTypeDef spiHal;
@@ -487,12 +493,28 @@ void TFT_eSPI::pushImageDMA(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t
 ** Function name:           DMA2_StreamX_IRQHandler
 ** Description:             Override the default HAL stream 3 interrupt handler
 ***************************************************************************************/
-extern "C" void DMA2_Stream3_IRQHandler();
-void DMA2_Stream3_IRQHandler(void)
-{
-  // Call the default end of buffer handler
-  HAL_DMA_IRQHandler(&dmaHal);
-}
+#if defined (TFT_SPI3)
+  extern "C" void DMA1_Stream5_IRQHandler();
+  void DMA1_Stream5_IRQHandler(void)
+  {
+    // Call the default end of buffer handler
+    HAL_DMA_IRQHandler(&dmaHal);
+  }
+#elif defined (TFT_SPI2)
+  extern "C" void DMA1_Stream4_IRQHandler();
+  void DMA1_Stream4_IRQHandler(void)
+  {
+    // Call the default end of buffer handler
+    HAL_DMA_IRQHandler(&dmaHal);
+  }
+#else
+  extern "C" void DMA2_Stream3_IRQHandler();
+  void DMA2_Stream3_IRQHandler(void)
+  {
+    // Call the default end of buffer handler
+    HAL_DMA_IRQHandler(&dmaHal);
+  }
+#endif
 
 /***************************************************************************************
 ** Function name:           initDMA
@@ -503,9 +525,16 @@ void DMA2_Stream3_IRQHandler(void)
 // https://electronics.stackexchange.com/questions/379813/configuring-the-dma-request-multiplexer-on-a-stm32h7-mcu
 bool TFT_eSPI::initDMA(void)
 {
-  __HAL_RCC_DMA2_CLK_ENABLE();                           // Enable DMA2 clock
-
-  dmaHal.Init.Channel = DMA_CHANNEL_3;                   // DMA channel 3 is for SPI1 TX
+  #if defined (TFT_SPI3)
+    __HAL_RCC_DMA1_CLK_ENABLE();                           // Enable DMA1 clock
+    dmaHal.Init.Channel = DMA_CHANNEL_0;                   // DMA channel 0 is for SPI3 TX
+  #elif defined (TFT_SPI2)
+    __HAL_RCC_DMA1_CLK_ENABLE();                           // Enable DMA1 clock
+    dmaHal.Init.Channel = DMA_CHANNEL_0;                   // DMA channel 0 is for SPI2 TX
+  #else
+    __HAL_RCC_DMA2_CLK_ENABLE();                           // Enable DMA2 clock
+    dmaHal.Init.Channel = DMA_CHANNEL_3;                   // DMA channel 3 is for SPI1 TX
+  #endif
   dmaHal.Init.Mode =  DMA_NORMAL; //DMA_CIRCULAR;   //   // Normal = send buffer once
   dmaHal.Init.Direction = DMA_MEMORY_TO_PERIPH;          // Copy memory to the peripheral
   dmaHal.Init.PeriphInc = DMA_PINC_DISABLE;              // Don't increment peripheral address
@@ -518,7 +547,13 @@ bool TFT_eSPI::initDMA(void)
     return DMA_Enabled = false;
   };
 
-  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);  // Enable DMA end interrupt handler
+  #if defined (TFT_SPI3)
+    HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);  // Enable DMA end interrupt handler
+  #elif defined (TFT_SPI2)
+    HAL_NVIC_EnableIRQ(DMA1_Stream4_IRQn);  // Enable DMA end interrupt handler
+  #else
+    HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);  // Enable DMA end interrupt handler
+  #endif
 
   __HAL_LINKDMA(&spiHal, hdmatx, dmaHal); // Attach DMA engine to SPI peripheral
 
