@@ -16,7 +16,7 @@
 #ifndef _TFT_eSPIH_
 #define _TFT_eSPIH_
 
-#define TFT_ESPI_VERSION "2.2.3"
+#define TFT_ESPI_VERSION "2.2.11"
 
 /***************************************************************************************
 **                         Section 1: Load required header files
@@ -335,6 +335,9 @@ int8_t pin_tft_d5;
 int8_t pin_tft_d6;
 int8_t pin_tft_d7;
 
+int8_t pin_tft_led;
+int8_t pin_tft_led_on;
+
 int8_t pin_tch_cs;   // Touch chip select pin
 
 int16_t tft_spi_freq;// TFT write SPI frequency
@@ -450,7 +453,7 @@ class TFT_eSPI : public Print {
            // The next functions can be used as a pair to copy screen blocks (or horizontal/vertical lines) to another location
            // Read a block of pixels to a data buffer, buffer is 16 bit and the size must be at least w * h
   void     readRect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t *data);
-           // Write a block of pixels to the screen - this is a deprecated alternative to pushImage()
+           // Write a block of pixels to the screen which have been read by readRect()
   void     pushRect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t *data);
 
            // These are used to render images or sprites stored in RAM arrays (used by Sprite class for 16bpp Sprites)
@@ -615,10 +618,11 @@ class TFT_eSPI : public Print {
   void     pushPixelsDMA(uint16_t* image, uint32_t len);
 
            // Check if the DMA is complete - use while(tft.dmaBusy); for a blocking wait
-  bool     dmaBusy(void);
+  bool     dmaBusy(void); // returns true if DMA is still in progress
+  void     dmaWait(void); // wait until DMA is complete
 
-  bool     DMA_Enabled = false; // Flag for DMA enabled state
-
+  bool     DMA_Enabled = false;   // Flag for DMA enabled state
+  uint8_t  spiBusyCheck = 0;      // Number of ESP32 transfer buffers to check
 
   // Bare metal functions
   void     startWrite(void);                         // Begin SPI transaction

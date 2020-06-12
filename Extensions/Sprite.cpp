@@ -59,8 +59,6 @@ void* TFT_eSprite::createSprite(int16_t w, int16_t h, uint8_t frames)
   _iwidth  = _dwidth  = _bitwidth = w;
   _iheight = _dheight = h;
 
-  _colorMap = nullptr;
-
   this->cursor_x = 0;
   this->cursor_y = 0;
 
@@ -80,9 +78,25 @@ void* TFT_eSprite::createSprite(int16_t w, int16_t h, uint8_t frames)
   _img    = (uint16_t*) _img8;
   _img4   = _img8;
 
+  if ( (_bpp == 16) && (frames > 1) ) {
+    _img8_2 = _img8 + (w * h * 2 + 1);
+  }
+
+  // ESP32 only 16bpp check
+  //if (esp_ptr_dma_capable(_img8_1)) Serial.println("DMA capable Sprite pointer _img8_1");
+  //else Serial.println("Not a DMA capable Sprite pointer _img8_1");
+  //if (esp_ptr_dma_capable(_img8_2)) Serial.println("DMA capable Sprite pointer _img8_2");
+  //else Serial.println("Not a DMA capable Sprite pointer _img8_2");
+
+  if ( (_bpp == 8) && (frames > 1) ) {
+    _img8_2 = _img8 + (w * h + 1);
+  }
+
+  if ( (_bpp == 4) && (_colorMap == nullptr)) createPalette(default_4bit_palette);
+
   // This is to make it clear what pointer size is expected to be used
   // but casting in the user sketch is needed due to the use of void*
-  if (_bpp == 1)
+  if ( (_bpp == 1) && (frames > 1) )
   {
     w = (w+7) & 0xFFF8;
     _img8_2 = _img8 + ( (w>>3) * h + 1 );
@@ -124,22 +138,25 @@ void* TFT_eSprite::callocSprite(int16_t w, int16_t h, uint8_t frames)
   // hence will run faster in normal circumstances.
   uint8_t* ptr8 = NULL;
 
+  if (frames > 2) frames = 2; // Currently restricted to 2 frame buffers
+  if (frames < 1) frames = 1;
+
   if (_bpp == 16)
   {
 #if defined (ESP32) && defined (CONFIG_SPIRAM_SUPPORT)
-    if ( psramFound() && this->_psram_enable ) ptr8 = ( uint8_t*) ps_calloc(w * h + 1, sizeof(uint16_t));
+    if ( psramFound() && this->_psram_enable && !_tft->DMA_Enabled) ptr8 = ( uint8_t*) ps_calloc(frames * w * h + frames, sizeof(uint16_t));
     else
 #endif
-    ptr8 = ( uint8_t*) calloc(w * h + 1, sizeof(uint16_t));
+    ptr8 = ( uint8_t*) calloc(frames * w * h + frames, sizeof(uint16_t));
   }
 
   else if (_bpp == 8)
   {
 #if defined (ESP32) && defined (CONFIG_SPIRAM_SUPPORT)
-    if ( psramFound() && this->_psram_enable ) ptr8 = ( uint8_t*) ps_calloc(w * h + 1, sizeof(uint8_t));
+    if ( psramFound() && this->_psram_enable ) ptr8 = ( uint8_t*) ps_calloc(frames * w * h + frames, sizeof(uint8_t));
     else
 #endif
-    ptr8 = ( uint8_t*) calloc(w * h + 1, sizeof(uint8_t));
+    ptr8 = ( uint8_t*) calloc(frames * w * h + frames, sizeof(uint8_t));
   }
 
   else if (_bpp == 4)
@@ -147,10 +164,10 @@ void* TFT_eSprite::callocSprite(int16_t w, int16_t h, uint8_t frames)
     w = (w+1) & 0xFFFE; // width needs to be multiple of 2, with an extra "off screen" pixel
     _iwidth = w;
 #if defined (ESP32) && defined (CONFIG_SPIRAM_SUPPORT)
-    if ( psramFound() && this->_psram_enable ) ptr8 = ( uint8_t*) ps_calloc(((w * h) >> 1) + 1, sizeof(uint8_t));
+    if ( psramFound() && this->_psram_enable ) ptr8 = ( uint8_t*) ps_calloc(((frames * w * h) >> 1) + frames, sizeof(uint8_t));
     else
 #endif
-    ptr8 = ( uint8_t*) calloc(((w * h) >> 1) + 1, sizeof(uint8_t));
+    ptr8 = ( uint8_t*) calloc(((frames * w * h) >> 1) + frames, sizeof(uint8_t));
   }
 
   else // Must be 1 bpp
@@ -163,8 +180,6 @@ void* TFT_eSprite::callocSprite(int16_t w, int16_t h, uint8_t frames)
     _iwidth = w;         // _iwidth is rounded up to be multiple of 8, so might not be = _dwidth
     _bitwidth = w;
 
-    if (frames > 2) frames = 2; // Currently restricted to 2 frame buffers
-    if (frames < 1) frames = 1;
 #if defined (ESP32) && defined (CONFIG_SPIRAM_SUPPORT)
     if ( psramFound() && this->_psram_enable ) ptr8 = ( uint8_t*) ps_calloc(frames * (w>>3) * h + frames, sizeof(uint8_t));
     else
@@ -180,7 +195,7 @@ void* TFT_eSprite::callocSprite(int16_t w, int16_t h, uint8_t frames)
 ** Description:             Set a palette for a 4-bit per pixel sprite
 *************************************************************************************x*/
 
-void TFT_eSprite::createPalette(uint16_t colorMap[], int colors)
+void TFT_eSprite::createPalette(uint16_t colorMap[], uint8_t colors)
 {
   if (_colorMap != nullptr)
   {
@@ -189,14 +204,18 @@ void TFT_eSprite::createPalette(uint16_t colorMap[], int colors)
 
   if (colorMap == nullptr)
   {
-    return; // do nothing other than clear the existing map
+    // Create a color map using the default FLASH map
+    createPalette(default_4bit_palette);
+    return;
   }
 
-  // allocate color map
+  // Allocate and clear memory for 16 color map
   _colorMap = (uint16_t *)calloc(16, sizeof(uint16_t));
-  if (colors > 16)
-    colors = 16;
-  for (auto i = 0; i < colors; i++)
+
+  if (colors > 16) colors = 16;
+  
+  // Copy map colors
+  for (uint8_t i = 0; i < colors; i++)
   {
     _colorMap[i] = colorMap[i];
   }
@@ -207,7 +226,7 @@ void TFT_eSprite::createPalette(uint16_t colorMap[], int colors)
 ** Description:             Set a palette for a 4-bit per pixel sprite
 *************************************************************************************x*/
 
-void TFT_eSprite::createPalette(const uint16_t colorMap[], int colors)
+void TFT_eSprite::createPalette(const uint16_t colorMap[], uint8_t colors)
 {
   if (_colorMap != nullptr)
   {
@@ -216,14 +235,17 @@ void TFT_eSprite::createPalette(const uint16_t colorMap[], int colors)
 
   if (colorMap == nullptr)
   {
-    return; // do nothing other than clear the existing map
+    // Create a color map using the default FLASH map
+    colorMap = default_4bit_palette;
   }
 
-  // allocate color map
+  // Allocate and clear memory for 16 color map
   _colorMap = (uint16_t *)calloc(16, sizeof(uint16_t));
-  if (colors > 16)
-    colors = 16;
-  for (auto i = 0; i < colors; i++)
+
+  if (colors > 16) colors = 16;
+
+  // Copy map colors
+  for (uint8_t i = 0; i < colors; i++)
   {
     _colorMap[i] = pgm_read_word(colorMap++);
   }
@@ -238,14 +260,14 @@ void* TFT_eSprite::frameBuffer(int8_t f)
 {
   if (!_created) return NULL;
 
-  if (_bpp == 16) return _img;
-
-  if (_bpp == 8) return _img8;
-
-  if (_bpp == 4) return _img4;
-
   if ( f == 2 ) _img8 = _img8_2;
   else          _img8 = _img8_1;
+
+  if (_bpp == 16) _img = (uint16_t*)_img8;
+
+  //if (_bpp == 8) _img8 = _img8;
+
+  if (_bpp == 4) _img4 = _img8;
 
   return _img8;
 }
@@ -291,7 +313,7 @@ int8_t TFT_eSprite::getColorDepth(void)
 
 /***************************************************************************************
 ** Function name:           setBitmapColor
-** Description:             Set the foreground foreground and background colour
+** Description:             Set the 1bpp foreground foreground and background colour
 ***************************************************************************************/
 void TFT_eSprite::setBitmapColor(uint16_t c, uint16_t b)
 {
@@ -302,23 +324,22 @@ void TFT_eSprite::setBitmapColor(uint16_t c, uint16_t b)
 
 /***************************************************************************************
 ** Function name:           setPaletteColor
-** Description:             Set the palette color at the given index
+** Description:             Set the 4bpp palette color at the given index
 ***************************************************************************************/
 void TFT_eSprite::setPaletteColor(uint8_t index, uint16_t color)
 {
-  if (_colorMap == nullptr || index > 15)
-    return; // out of bounds
+  if (_colorMap == nullptr || index > 15) return; // out of bounds
+
   _colorMap[index] = color;
 }
 
 /***************************************************************************************
 ** Function name:           getPaletteColor
-** Description:             Return the palette color at index, or 0 (black) on error.
+** Description:             Return the palette color at 4bpp index, or 0 on error.
 ***************************************************************************************/
 uint16_t TFT_eSprite::getPaletteColor(uint8_t index)
 {
-  if (_colorMap == nullptr || index > 15)
-    return 0;
+  if (_colorMap == nullptr || index > 15) return 0; // out of bounds
 
   return _colorMap[index];
 }
@@ -380,7 +401,7 @@ int16_t TFT_eSprite::getPivotY(void)
 #define FP_SCALE 10
 bool TFT_eSprite::pushRotated(int16_t angle, int32_t transp)
 {
-  if ( !_created || _bpp == 4) return false;
+  if ( !_created) return false;
 
   // Bounding box parameters
   int16_t min_x;
@@ -398,6 +419,7 @@ bool TFT_eSprite::pushRotated(int16_t angle, int32_t transp)
   uint32_t xe = _iwidth << FP_SCALE;
   uint32_t ye = _iheight << FP_SCALE;
   uint32_t tpcolor = transp;  // convert to unsigned
+  if (_bpp == 4) tpcolor = _colorMap[transp & 0x0F];
 
   _tft->startWrite(); // Avoid transaction overhead for every tft pixel
 
@@ -446,9 +468,10 @@ bool TFT_eSprite::pushRotated(int16_t angle, int32_t transp)
 ** Function name:           pushRotated - Fast fixed point integer maths version
 ** Description:             Push a rotated copy of the Sprite to another Sprite
 *************************************************************************************x*/
+// Not compatible with 4bpp
 bool TFT_eSprite::pushRotated(TFT_eSprite *spr, int16_t angle, int32_t transp)
 {
-  if ( !_created  || _bpp == 4) return false;       // Check this Sprite is created
+  if ( !_created  || _bpp == 4) return false; // Check this Sprite is created
   if ( !spr->_created  || spr->_bpp == 4) return false;  // Ckeck destination Sprite is created
 
   // Bounding box parameters
@@ -643,12 +666,8 @@ void TFT_eSprite::pushSprite(int32_t x, int32_t y)
   }
   else if (_bpp == 4)
   {
-    if (_colorMap == nullptr) {
-      return;
-    }
     _tft->pushImage(x, y, _dwidth, _dheight, _img4, false, _colorMap);
   }
-
   else _tft->pushImage(x, y, _dwidth, _dheight, _img8, (bool)(_bpp == 8));
 }
 

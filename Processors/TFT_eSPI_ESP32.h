@@ -10,13 +10,11 @@
 
 // Include processor specific header
 #include "soc/spi_reg.h"
+#include "driver/spi_master.h"
 
 // Processor specific code used by SPI bus transaction startWrite and endWrite functions
 #define SET_BUS_WRITE_MODE // Not used
 #define SET_BUS_READ_MODE  // Not used
-
-// Code to check if DMA is busy, used by SPI bus transaction transaction and endWrite functions
-#define DMA_BUSY_CHECK // DMA not implemented for this processor (yet)
 
 // SUPPORT_TRANSACTIONS is mandatory for ESP32 so the hal mutex is toggled
 #if !defined (SUPPORT_TRANSACTIONS)
@@ -41,9 +39,26 @@
 
 // Define a generic flag for 8 bit parallel
 #if defined (ESP32_PARALLEL) // Specific to ESP32 for backwards compatibility
-  #define TFT_PARALLEL_8_BIT // Generic parallel flag
+  #if !defined (TFT_PARALLEL_8_BIT)
+    #define TFT_PARALLEL_8_BIT // Generic parallel flag
+  #endif
 #endif
 
+// Ensure ESP32 specific flag is defined for 8 bit parallel
+#if defined (TFT_PARALLEL_8_BIT)
+  #if !defined (ESP32_PARALLEL)
+    #define ESP32_PARALLEL
+  #endif
+#endif
+
+// Code to check if DMA is busy, used by SPI bus transaction transaction and endWrite functions
+#if !defined(TFT_PARALLEL_8_BIT) && !defined(ILI9488_DRIVER) && !defined (RPI_DISPLAY_TYPE)
+  #define ESP32_DMA
+  // Code to check if DMA is busy, used by SPI DMA + transaction + endWrite functions
+  #define DMA_BUSY_CHECK  dmaWait()
+#else
+  #define DMA_BUSY_CHECK
+#endif
 
 // If smooth font is used then it is likely SPIFFS will be needed
 #ifdef SMOOTH_FONT
@@ -160,12 +175,64 @@
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////////////
-// Make sure TFT_MISO is defined if not used to avoid an error message
+// Make sure SPI default pins are assigned if not specified by user or set to -1
 ////////////////////////////////////////////////////////////////////////////////////////
 #if !defined (TFT_PARALLEL_8_BIT)
-  #ifndef TFT_MISO
-    #define TFT_MISO -1
+
+  #ifdef USE_HSPI_PORT
+
+    #ifndef TFT_MISO
+      #define TFT_MISO 12
+    #endif
+    #if (TFT_MISO == -1)
+      #undef TFT_MISO
+      #define TFT_MISO 12
+    #endif
+
+    #ifndef TFT_MOSI
+      #define TFT_MOSI 13
+    #endif
+    #if (TFT_MOSI == -1)
+      #undef TFT_MOSI
+      #define TFT_MOSI 13
+    #endif
+
+    #ifndef TFT_SCLK
+      #define TFT_SCLK 14
+    #endif
+    #if (TFT_SCLK == -1)
+      #undef TFT_SCLK
+      #define TFT_SCLK 14
+    #endif
+
+  #else // VSPI port
+
+    #ifndef TFT_MISO
+      #define TFT_MISO 19
+    #endif
+    #if (TFT_MISO == -1)
+      #undef TFT_MISO
+      #define TFT_MISO 19
+    #endif
+
+    #ifndef TFT_MOSI
+      #define TFT_MOSI 23
+    #endif
+    #if (TFT_MOSI == -1)
+      #undef TFT_MOSI
+      #define TFT_MOSI 23
+    #endif
+
+    #ifndef TFT_SCLK
+      #define TFT_SCLK 18
+    #endif
+    #if (TFT_SCLK == -1)
+      #undef TFT_SCLK
+      #define TFT_SCLK 18
+    #endif
+
   #endif
+
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////////////

@@ -860,14 +860,14 @@ void TFT_eSPI::readRect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t *da
 
 
 /***************************************************************************************
-** Function name:           push rectangle (for SPI Interface II i.e. IM [3:0] = "1101")
+** Function name:           push rectangle
 ** Description:             push 565 pixel colours into a defined area
 ***************************************************************************************/
 void TFT_eSPI::pushRect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t *data)
 {
-  // Function deprecated, remains for backwards compatibility
-  // New pushImage() is better as it will crop partly off-screen image blocks
+  bool swap = _swapBytes; _swapBytes = false;
   pushImage(x, y, w, h, data);
+  _swapBytes = swap;
 }
 
 
@@ -2614,9 +2614,6 @@ void TFT_eSPI::setWindow(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
 {
   //begin_tft_write(); // Must be called before setWindow
 
-  addr_col = 0xFFFF;
-  addr_row = 0xFFFF;
-
 #ifdef CGRAM_OFFSET
   x0+=colstart;
   x1+=colstart;
@@ -2624,16 +2621,21 @@ void TFT_eSPI::setWindow(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
   y1+=rowstart;
 #endif
 
-  // Column addr set
-  DC_C; tft_Write_8(TFT_CASET);
-  DC_D; tft_Write_32C(x0, x1);
+  // No need to send x if it has not changed (speeds things up)
+  if (addr_col != (x0<<16 | x1)) {
+    DC_C; tft_Write_8(TFT_CASET);
+    DC_D; tft_Write_32C(x0, x1);
+    addr_col = (x0<<16 | x1);
+  }
 
-  // Row addr set
-  DC_C; tft_Write_8(TFT_PASET);
-  DC_D; tft_Write_32C(y0, y1);
+  // No need to send y if it has not changed (speeds things up)
+  if (addr_row != (y0<<16 | y1)) {
+    DC_C; tft_Write_8(TFT_PASET);
+    DC_D; tft_Write_32C(y0, y1);
+    addr_row = (y0<<16 | y1);
+  }
 
   DC_C; tft_Write_8(TFT_RAMWR);
-
   DC_D;
 
   //end_tft_write(); // Must be called after setWindow
@@ -2695,17 +2697,17 @@ void TFT_eSPI::drawPixel(int32_t x, int32_t y, uint32_t color)
   begin_tft_write();
 
   // No need to send x if it has not changed (speeds things up)
-  if (addr_col != x) {
+  if (addr_col != (x<<16 | x)) {
     DC_C; tft_Write_8(TFT_CASET);
     DC_D; tft_Write_32D(x);
-    addr_col = x;
+    addr_col = (x<<16 | x);
   }
 
   // No need to send y if it has not changed (speeds things up)
-  if (addr_row != y) {
+  if (addr_row != (y<<16 | y)) {
     DC_C; tft_Write_8(TFT_PASET);
     DC_D; tft_Write_32D(y);
-    addr_row = y;
+    addr_row = (y<<16 | y);
   }
 
   DC_C; tft_Write_8(TFT_RAMWR);
@@ -3576,21 +3578,55 @@ int16_t TFT_eSPI::drawChar(uint16_t uniCode, int32_t x, int32_t y, uint8_t font)
         }
       }
     }
-    else { // Text colour != background && textsize = 1
-           // so use faster drawing of characters and background using block write
-      setWindow(x, y, x + width - 1, y + height - 1);
+    else {
+      // Text colour != background && textsize = 1 and character is within screen area
+      // so use faster drawing of characters and background using block write
+      if ((x >= 0) && (x + width <= _width) && (y >= 0) && (y + height <= _height))
+      {
+        setWindow(x, y, x + width - 1, y + height - 1);
 
-      // Maximum font size is equivalent to 180x180 pixels in area
-      while (w > 0) {
-        line = pgm_read_byte((uint8_t *)flash_address++); // 8 bytes smaller when incrementing here
-        if (line & 0x80) {
-          line &= 0x7F;
-          line++; w -= line;
-          pushBlock(textcolor,line);
+        // Maximum font size is equivalent to 180x180 pixels in area
+        while (w > 0) {
+          line = pgm_read_byte((uint8_t *)flash_address++); // 8 bytes smaller when incrementing here
+          if (line & 0x80) {
+            line &= 0x7F;
+            line++; w -= line;
+            pushBlock(textcolor,line);
+          }
+          else {
+            line++; w -= line;
+            pushBlock(textbgcolor,line);
+          }
         }
-        else {
-          line++; w -= line;
-          pushBlock(textbgcolor,line);
+      }
+      else
+      {
+        int32_t px = x, py = y;  // To hold character block start and end column and row values
+        int32_t pc = 0;          // Pixel count
+        int32_t pl = 0;          // Pixel line length
+        uint16_t pcol = 0;       // Pixel color
+
+        while (pc < w) {
+          line = pgm_read_byte((uint8_t *)flash_address);
+          flash_address++;
+          if (line & 0x80) { pcol = textcolor; line &= 0x7F; }
+          else pcol = textbgcolor;
+          line++;
+          px = x + pc % width;
+          py = y + pc / width;
+
+          pl = 0;
+          pc += line;
+          while (line--) { // In this case the while(line--) is faster
+            pl++;
+            if ((px+pl) >= (x + width)) {
+              drawFastHLine(px, py, pl, pcol);
+              pl = 0;
+              px = x;
+              py ++;
+            }
+          }
+          if (pl)drawFastHLine(px, py, pl, pcol);
         }
       }
     }
@@ -4202,6 +4238,14 @@ void TFT_eSPI::getSetup(setup_t &tft_settings)
   tft_settings.pin_tft_d5 = -1;
   tft_settings.pin_tft_d6 = -1;
   tft_settings.pin_tft_d7 = -1;
+#endif
+
+#if defined (TFT_BL)
+  tft_settings.pin_tft_led = TFT_BL;
+#endif
+
+#if defined (TFT_BACKLIGHT_ON)
+  tft_settings.pin_tft_led_on = TFT_BACKLIGHT_ON;
 #endif
 
 #if defined (TOUCH_CS)
